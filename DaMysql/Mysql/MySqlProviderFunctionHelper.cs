@@ -61,7 +61,9 @@ namespace DaMysql.Mysql
                 probValue = tObjProbItem.GetValue(toGenObj);
                 selection.Add(tObjProbItem.Name);
                 if (probValue != null)
+                {
                     paramContainer.Add(new mysqlParamContainer() { Name = tObjProbItem.Name, Value = probValue });
+                }
             }
             string statHelper = string.Format("Select {0} From `{1}`", string.Join(",", selection), table);
             if (paramContainer.Count != 0)
@@ -70,7 +72,10 @@ namespace DaMysql.Mysql
                 for (int i = 0; i < paramContainer.Count; i++)
                 {
                     if (i != 0)
+                    {
                         statHelper += " and ";
+                    }
+
                     statHelper += string.Format("{0} = @par{1}", paramContainer[i].Name, i);
                     paramContainer[i].Name = "@par" + i.ToString(); //For further preparing usage
                 }

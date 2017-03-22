@@ -1,5 +1,6 @@
 ﻿using MySql.Data.MySqlClient;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Linq;
 using static DaMysql.Mysql.MySqlFunctionHelper;
@@ -8,21 +9,20 @@ namespace DaMysql.Mysql
 {
     internal class MysqlProvider
     {
-        private MySqlConnection dbcon = null;
-        public bool StrictMode { get { return _strictMode; } set { _strictMode = value; } }
-        private bool _strictMode;
+        private MySqlConnection _dbcon = null;
+        public bool StrictMode { get; set; }
 
-        public MysqlProvider(MysqlConnectionData ConnectionData)
+        public MysqlProvider(MysqlConnectionData connectionData)
         {
-            _strictMode = ConnectionData.StrictMode;
-            dbcon = new MySqlConnection(ConnectionData.ToString());
-            dbcon.Open();
+            StrictMode = connectionData.StrictMode;
+            _dbcon = new MySqlConnection(connectionData.ToString());
+            _dbcon.Open();
         }
 
         ~MysqlProvider()
         {
-            dbcon.Close();
-            dbcon = null;
+            _dbcon.Close();
+            _dbcon = null;
         }
 
         public List<T> DoSelect<T>(string table, T toGenObj) where T : new()
@@ -68,66 +68,66 @@ namespace DaMysql.Mysql
         {
             List<T> retquery = null;
             if (typeof(T) != typeof(runQueryAsVoid)) //Just execute, don't do anything with result
-                retquery = new List<T>();
-
-            if (typeof(T) == typeof(List<mysqlField>))
-                return (execQueryToList(query, escapedStrings)) as List<T>;
-
-            using (MySqlCommand exec_cmd = dbcon.CreateCommand())
             {
-                exec_cmd.CommandText = query;
+                retquery = new List<T>();
+            }
+
+            if (typeof(T) == typeof(Dictionary<string, object>))
+            {
+                return (ExecQueryToList(query, escapedStrings)) as List<T>;
+            }
+
+            var thObjProb = typeof(T).GetProperties();
+
+            using (var execCmd = _dbcon.CreateCommand())
+            {
+                execCmd.CommandText = query;
                 if (escapedStrings != null)
                 {
                     foreach (var escapeString in escapedStrings)
-                        exec_cmd.Parameters.AddWithValue(escapeString.Name, escapeString.Value);
-                    exec_cmd.Prepare();
+                    {
+                        execCmd.Parameters.AddWithValue(escapeString.Name, escapeString.Value);
+                    }
+                    execCmd.Prepare();
                 }
 
-                using (MySqlDataReader msgquery_reader = exec_cmd.ExecuteReader())
+                using (var msgqueryReader = execCmd.ExecuteReader())
                 {
                     if (retquery == null)
                     {
                         //If just insertion-return null.
-                        msgquery_reader.Close();
+                        msgqueryReader.Close();
                         return null;
                     }
                     //Getting First result (outside of while because of exeption handling)
-                    msgquery_reader.Read();
+                    msgqueryReader.Read();
 
                     ////Do strict exception handling if row doesn't exist
-                    if (_strictMode)
+                    if (StrictMode)
                     {
-                        var fieldNames = Enumerable.Range(0, msgquery_reader.FieldCount).Select(i => msgquery_reader.GetName(i)).ToArray();
-                        var tObj = new T();
-                        var tObjProb = tObj.GetType().GetProperties();
+                        var fieldNames = Enumerable.Range(0, msgqueryReader.FieldCount).Select(i => msgqueryReader.GetName(i)).ToArray();
 
-                        foreach (var tObjProbItem in tObjProb)
-                            if (!fieldNames.Contains(tObjProbItem.Name))
-                                throw new MySqlTypeError("The given type doesn't match one of the resulting fields!", MySqlFunctionHelper.generateTypeCorrection(query, msgquery_reader));
+                        if (thObjProb.Any(tObjProbItem => !fieldNames.Contains(tObjProbItem.Name)))
+                        {
+                            throw new MySqlTypeError("The given type doesn't match one of the resulting fields!", MySqlFunctionHelper.generateTypeCorrection(query, msgqueryReader));
+                        }
                     }
                     ////end strict exception handling
 
-                    Dictionary<string, object> obj;
-
                     do
                     {
-                        obj = Enumerable.Range(0, msgquery_reader.FieldCount).ToDictionary(
-                                                             i => msgquery_reader.GetName(i),
-                                                             i => msgquery_reader.GetValue(i));
+                        var obj = Enumerable.Range(0, msgqueryReader.FieldCount).ToDictionary(
+                            i => msgqueryReader.GetName(i),
+                            i => msgqueryReader.GetValue(i));
 
                         var thObj = new T();
-                        var thObjProb = thObj.GetType().GetProperties();
 
                         foreach (var item in thObjProb)
                         {
-                            object myObj;// = msgquery_reader[item.Name];
-                            if (obj.TryGetValue(item.Name, out myObj)) //Result contains a column with the name of a property of the given object
-                                item.SetValue(thObj, myObj);
-                            else
-                                item.SetValue(thObj, null);
+                            item.SetValue(thObj, obj.TryGetValue(item.Name, out object myObj) ? myObj : null);
                         }
                         retquery.Add(thObj);
-                    } while (msgquery_reader.Read());
+                    } while (msgqueryReader.Read());
                 }
             }
             return retquery;
@@ -139,50 +139,37 @@ namespace DaMysql.Mysql
         /// <param name="query"></param>
         /// <param name="escapedStrings"></param>
         /// <returns></returns>
-        private List<List<mysqlField>> execQueryToList(string query, mysqlParamContainer[] escapedStrings = null)
+        private IEnumerable<Dictionary<string, object>> ExecQueryToList(string query, mysqlParamContainer[] escapedStrings = null)
         {
             var retquery = new List<List<mysqlField>>();
             var ret = new List<Dictionary<string, object>>();
-            using (MySqlCommand exec_cmd = dbcon.CreateCommand())
+            using (var execCmd = _dbcon.CreateCommand())
             {
-                exec_cmd.CommandText = query;
+                execCmd.CommandText = query;
                 if (escapedStrings != null)
                 {
                     foreach (var escapeString in escapedStrings)
-                        exec_cmd.Parameters.AddWithValue(escapeString.Name, escapeString.Value);
-                    exec_cmd.Prepare();
-                }
-
-                using (MySqlDataReader msgquery_reader = exec_cmd.ExecuteReader())
-                {
-                    foreach (System.Data.Common.DbDataRecord item in msgquery_reader)
                     {
-                        Dictionary<string, object> retVar = new Dictionary<string, object>();
-                        for (int i = 0; i < item.FieldCount; i++)
-                        {
-                            retVar[item.GetName(i)] = item[i];
-                        }
-                        ret.Add(retVar);
+                        execCmd.Parameters.AddWithValue(escapeString.Name, escapeString.Value);
                     }
 
-                    //+		item	{System.Data.Common.DataRecordInternal}	object {System.Data.Common.DataRecordInternal}
+                    execCmd.Prepare();
+                }
 
-                    //while (msgquery_reader.Read())
-                    //{
-                    //    retquery.Add(new List<mysqlField>());
-                    //    for (int i = 0; i < msgquery_reader.FieldCount; i++)
-                    //    {
-                    //        retquery[retquery.Count - 1].Add(new mysqlField()
-                    //        {
-                    //            Name = msgquery_reader.GetName(i),
-                    //            Value = msgquery_reader[i].ToString()
-                    //        });
-                    //        Debugger.Break();
-                    //    }
-                    //}
+                using (var msgqueryReader = execCmd.ExecuteReader())
+                {
+                    if (msgqueryReader == null)
+                    {
+                        return null;
+                    }
+
+                    return (msgqueryReader.Cast<DbDataRecord>()
+                        .Select(item => Enumerable.Range(0, msgqueryReader.FieldCount)
+                            .ToDictionary(i => msgqueryReader.GetName(i), i => msgqueryReader.GetValue(i))));
+
+                    //    ret.AddRange(from DbDataRecord item in msgquery_reader select Enumerable.Range(0, msgquery_reader.FieldCount).ToDictionary(i => msgquery_reader.GetName(i), i => msgquery_reader.GetValue(i)));
                 }
             }
-            return retquery;
         }
 
         public string QueryGenerator()
