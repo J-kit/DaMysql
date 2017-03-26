@@ -1,24 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace DaMysql.Mysql
+﻿namespace DaMysql.Mysql
 {
-    internal class mysqlField
+    internal class MysqlField
     {
         public string Name { get; set; }
         public string Value { get; set; }
     }
 
-    internal class mysqlParamContainer
+    internal class MysqlParamContainer
     {
         public string Name { get; set; }
         public object Value { get; set; }
     }
 
-    internal class runQueryAsVoid { }
+    internal class RunQueryAsVoid { }
 
     internal class HelperStructures
     {
@@ -27,6 +21,6 @@ namespace DaMysql.Mysql
     internal class SelectStatementContainer
     {
         public string Statement { get; set; }
-        public mysqlParamContainer[] escapedStrings { get; set; }
+        public MysqlParamContainer[] EscapedStrings { get; set; }
     }
 }
